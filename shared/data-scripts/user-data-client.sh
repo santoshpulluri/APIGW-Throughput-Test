@@ -25,33 +25,6 @@ NOMAD_HCL_PATH="/etc/nomad.d/nomad.hcl"
 CLOUD_ENV="${cloud_env}"
 CONSULCONFIGDIR=/etc/consul.d
 
-# Determine partition based on application type and update Consul config
-if [ "${application_name}" = "hello-service" ] || [ "${application_name}" = "apigw-service" ] || [ "${application_name}" = "mesh-gateway-ap1" ]; then
-  echo "Configuring Consul client for partition AP1"
-  # Get AWS metadata token
-  TOKEN=$(curl -X PUT "http://instance-data/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-  PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://instance-data/latest/meta-data/local-ipv4)
-  
-  sed -i "s/IP_ADDRESS/$PRIVATE_IP/g" /ops/shared/config/consul_client_ap1.hcl
-  sed -i "s/RETRY_JOIN/${retry_join}/g" /ops/shared/config/consul_client_ap1.hcl
-  sudo cp /ops/shared/config/consul_client_ap1.hcl $CONSULCONFIGDIR/consul.hcl
-  
-  # Restart consul to apply partition configuration
-  sudo systemctl restart consul.service
-elif [ "${application_name}" = "response-service" ] || [ "${application_name}" = "mesh-gateway-ap2" ]; then
-  echo "Configuring Consul client for partition AP2"
-  # Get AWS metadata token
-  TOKEN=$(curl -X PUT "http://instance-data/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-  PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://instance-data/latest/meta-data/local-ipv4)
-  
-  sed -i "s/IP_ADDRESS/$PRIVATE_IP/g" /ops/shared/config/consul_client_ap2.hcl
-  sed -i "s/RETRY_JOIN/${retry_join}/g" /ops/shared/config/consul_client_ap2.hcl
-  sudo cp /ops/shared/config/consul_client_ap2.hcl $CONSULCONFIGDIR/consul.hcl
-  
-  # Restart consul to apply partition configuration
-  sudo systemctl restart consul.service
-fi
-
 # wait for consul to start
 sleep 10
 
@@ -93,14 +66,15 @@ if [ "${application_name}" = "hello-service" ]; then
 
   sleep 10
 
-  # Register the service with Consul in partition AP1
-  consul services register -partition=AP1 /ops/shared/config/hello-service.json
-  consul services register -partition=AP1 /ops/shared/config/hello-service-proxy.hcl
+  # Register the service with Consul
+  consul services register /ops/shared/config/hello-service.json
+  consul services register /ops/shared/config/hello-service-proxy.hcl
   # sudo docker run -d --name service-a-sidecar --network host consul:1.18 connect proxy -sidecar-for service-hello -admin-bind="127.0.0.1:19000"
   
   touch /var/log/envoy.log
   chmod a+rw /var/log/envoy.log
-  consul connect envoy -partition=AP1 -sidecar-for service-hello-${index} -ignore-envoy-compatibility -- -l info > /var/log/envoy.log 2>&1 &
+  consul connect envoy -sidecar-for service-hello-${index} -ignore-envoy-compatibility -- -l debug > /var/log/envoy.log 2>&1 &
+
 elif [ "${application_name}" = "response-service" ]; then
   sudo touch /var/log/fake_service.log
   sudo chmod a+rw /var/log/fake_service.log
@@ -134,14 +108,15 @@ elif [ "${application_name}" = "response-service" ]; then
   sed -i "s/INSTANCE_INDEX/${index}/g" /ops/shared/config/response-service-proxy.hcl
   sed -i "s/PROXY_PORT/21000/g" /ops/shared/config/response-service-proxy.hcl
 
-  # Register the service with Consul in partition AP2
-  consul services register -partition=AP2 /ops/shared/config/response-service.json
-  consul services register -partition=AP2 /ops/shared/config/response-service-proxy.hcl
+  # Register the service with Consul
+  consul services register /ops/shared/config/response-service.json
+  consul services register /ops/shared/config/response-service-proxy.hcl
   # sudo docker run -d --name service-a-sidecar --network host consul:1.18 connect proxy -sidecar-for service-response -admin-bind="127.0.0.1:19000"
 
   touch /var/log/envoy.log
   chmod a+rw /var/log/envoy.log
-  consul connect envoy -partition=AP2 -sidecar-for service-response-${index} -ignore-envoy-compatibility -- -l info > /var/log/envoy.log 2>&1 &
+  consul connect envoy -sidecar-for service-response-${index} -ignore-envoy-compatibility -- -l debug > /var/log/envoy.log 2>&1 &
+
 elif [ "${application_name}" = "apigw-service" ]; then
   sleep 10
 
@@ -163,75 +138,26 @@ elif [ "${application_name}" = "apigw-service" ]; then
     cp /tmp/shared/config/api-gw-routes.hcl /ops/shared/config/api-gw-routes.hcl
   fi
 
-  # creating proxy default for AP1 partition  
-  sudo tee ./proxy-default-ap1.hcl<<EOF
-  Kind      = "proxy-defaults"
-  Name      = "global"
-  Partition = "AP1"
-  Namespace = "default"
-  MeshGateway {
-    Mode = "local"
-  }
-  Config {
-    protocol = "http"
-  }
+  # creating proxy default
+  sudo tee ./proxy-default.hcl<<EOF
+Kind      = "proxy-defaults"
+Name      = "global"
+Config {
+  protocol = "http"
+}
 EOF
 
-  # creating proxy default for AP2 partition
-  sudo tee ./proxy-default-ap2.hcl<<EOF
-  Kind      = "proxy-defaults"
-  Name      = "global"
-  Partition = "AP2"
-  Namespace = "default"
-  MeshGateway {
-    Mode = "local"
-  }
-  Config {
-    protocol = "http"
-  }
-EOF
+  consul config write proxy-default.hcl
 
-  consul config write -partition=AP1 proxy-default-ap1.hcl
-  consul config write -partition=AP2 proxy-default-ap2.hcl
+  # Register the service with Consul
+  consul config write /ops/shared/config/api-gw.hcl
+  consul config write /ops/shared/config/api-gw-routes.hcl
 
-  # Register the API gateway with Consul in partition AP1
-  consul config write -partition=AP1 /ops/shared/config/api-gw.hcl
-  consul config write -partition=AP1 /ops/shared/config/api-gw-routes.hcl
-
-  # starting envoy for API gateway in AP1 partition
+  # starting envoy
   touch /var/log/envoy.log
   chmod a+rw /var/log/envoy.log
-  consul connect envoy -partition=AP1 -gateway api -register -service minion-gateway -admin-bind 0.0.0.0:19000 -- --log-level info > /var/log/envoy.log 2>&1 &
-elif [ "${application_name}" = "mesh-gateway-ap1" ]; then
-  echo "Starting Mesh Gateway for partition AP1"
-  sleep 10
+  consul connect envoy -gateway api -register -service minion-gateway -admin-bind 0.0.0.0:19000 -- --log-level debug > /var/log/envoy.log 2>&1 &
 
-  # Copy and configure mesh gateway service definition
-  cp /tmp/shared/config/mesh-gateway-ap1.hcl /ops/shared/config/mesh-gateway-ap1.hcl
-  sed -i "s/IP_ADDRESS/$PRIVATE_IP/g" /ops/shared/config/mesh-gateway-ap1.hcl
-
-  # Register mesh gateway service in AP1 partition
-  consul services register -partition=AP1 /ops/shared/config/mesh-gateway-ap1.hcl
-
-  # Start Envoy as mesh gateway
-  touch /var/log/envoy.log
-  chmod a+rw /var/log/envoy.log
-  consul connect envoy -partition=AP1 -gateway mesh -register -service mesh-gateway -address "$PRIVATE_IP:8444" -wan-address "$PUBLIC_IP:8444" -admin-bind 0.0.0.0:19000 -- --log-level info > /var/log/envoy.log 2>&1 &
-elif [ "${application_name}" = "mesh-gateway-ap2" ]; then
-  echo "Starting Mesh Gateway for partition AP2"
-  sleep 10
-
-  # Copy and configure mesh gateway service definition
-  cp /tmp/shared/config/mesh-gateway-ap2.hcl /ops/shared/config/mesh-gateway-ap2.hcl
-  sed -i "s/IP_ADDRESS/$PRIVATE_IP/g" /ops/shared/config/mesh-gateway-ap2.hcl
-
-  # Register mesh gateway service in AP2 partition
-  consul services register -partition=AP2 /ops/shared/config/mesh-gateway-ap2.hcl
-
-  # Start Envoy as mesh gateway
-  touch /var/log/envoy.log
-  chmod a+rw /var/log/envoy.log
-  consul connect envoy -partition=AP2 -gateway mesh -register -service mesh-gateway -address "$PRIVATE_IP:8444" -wan-address "$PUBLIC_IP:8444" -admin-bind 0.0.0.0:19000 -- --log-level info > /var/log/envoy.log 2>&1 &
 elif [ "${application_name}" = "grafana-service" ]; then
   echo "Starting grafana service"
 
@@ -316,6 +242,7 @@ EOF
 
   sleep 10
   sudo systemctl restart prometheus
+
 else
   echo "Unknown application name: ${application_name}"
 fi
