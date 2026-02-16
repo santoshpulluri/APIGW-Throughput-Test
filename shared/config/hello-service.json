@@ -1,0 +1,24 @@
+{
+  "service": {
+    "id": "service-hello-INSTANCE_INDEX",
+    "name": "service-hello",
+    "port": 5050,
+    "address": "IP_ADDRESS",
+    "connect": {
+      "sidecar_service": {
+        "proxy": {
+          "upstreams": [
+            {
+              "destination_name": "service-response",
+              "local_bind_port": 9999
+            }
+          ]
+        }
+      }
+    },
+    "check": {
+      "http": "http://IP_ADDRESS:5050/health",
+      "interval": "10s"
+    }
+  }
+}

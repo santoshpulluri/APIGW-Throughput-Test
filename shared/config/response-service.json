@@ -1,0 +1,15 @@
+{
+  "Service": {
+    "name": "service-response",
+    "id": "service-response-INSTANCE_INDEX",
+    "address": "IP_ADDRESS",
+    "port": 6060,
+    "connect": {
+      "sidecar_service": {}
+    },
+    "check": {
+      "http": "http://IP_ADDRESS:6060/health",
+      "interval": "10s"
+    }
+  }
+}
