@@ -194,19 +194,11 @@ resource "aws_instance" "hello_service" {
   }
 
   # initialises the instance with the runtime configuration
-  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client.sh", {
+  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client-hello.sh", {
     region                    = var.region
     cloud_env                 = "aws"
     retry_join                = var.retry_join
-    # for registering with Consul
-    consul_ip                 = aws_instance.consul.private_ip
-    application_port          = 5000
-    application_name          = "hello-service"
-    application_health_ep     = "hello"
-    dockerhub_id              = ""
     index                     = count.index
-    prometheus_ip            = "1.1.1.1"
-    prometheus_targets       = ""
   })
 
   vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
@@ -255,19 +247,11 @@ resource "aws_instance" "response_service" {
   }
 
   # initialises the instance with the runtime configuration
-  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client.sh", {
+  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client-response.sh", {
     region                    = var.region
     cloud_env                 = "aws"
     retry_join                = var.retry_join
-    # for registering with Consul
-    consul_ip                 = aws_instance.consul.private_ip
-    application_port          = 5001
-    application_name          = "response-service"
-    application_health_ep     = "response"
-    dockerhub_id              = ""
     index                     = count.index
-    prometheus_ip            = "1.1.1.1"
-    prometheus_targets       = ""
   })
 
   vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
@@ -315,19 +299,10 @@ resource "aws_instance" "apigw_service" {
   }
 
   # initialises the instance with the runtime configuration
-  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client.sh", {
+  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client-apigw.sh", {
     region                    = var.region
     cloud_env                 = "aws"
     retry_join                = var.retry_join
-    # for registering with Consul
-    consul_ip                 = aws_instance.consul.private_ip
-    application_port          = 5001
-    application_name          = "apigw-service"
-    application_health_ep     = ""
-    dockerhub_id              = ""
-    index                     = 1
-    prometheus_ip            = "1.1.1.1"
-    prometheus_targets       = ""
   })
 
   vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
@@ -375,18 +350,10 @@ resource "aws_instance" "prometheus" {
   }
 
   # initialises the instance with the runtime configuration
-  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client.sh", {
+  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client-prometheus.sh", {
     region                    = var.region
     cloud_env                 = "aws"
     retry_join                = var.retry_join
-    # for registering with Consul
-    consul_ip                 = aws_instance.consul.private_ip
-    application_port          = 5001
-    application_name          = "prometheus-service"
-    application_health_ep     = ""
-    dockerhub_id              = ""
-    index                     = 1
-    prometheus_ip            = "1.1.1.1"
     prometheus_targets       = "${aws_instance.hello_service[0].private_ip}:8500\", \"${aws_instance.hello_service[1].private_ip}:8500\", \"${aws_instance.response_service[0].private_ip}:8500\", \"${aws_instance.response_service[1].private_ip}:8500\", \"${aws_instance.apigw_service.private_ip}:8500\", \"${aws_instance.consul.private_ip}"
   })
 
@@ -435,19 +402,11 @@ resource "aws_instance" "grafana" {
   }
 
   # initialises the instance with the runtime configuration
-  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client.sh", {
+  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client-grafana.sh", {
     region                    = var.region
     cloud_env                 = "aws"
     retry_join                = var.retry_join
-    # for registering with Consul
-    consul_ip                 = aws_instance.consul.private_ip
-    application_port          = 5001
-    application_name          = "grafana-service"
-    application_health_ep     = ""
-    dockerhub_id              = ""
-    index                     = 1
     prometheus_ip            = aws_instance.prometheus.private_ip
-    prometheus_targets       = ""
   })
 
   vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
