@@ -43,27 +43,6 @@ sleep 10
 
 echo "Consul started"
 
-# Set Consul environment variables
-export CONSUL_HTTP_ADDR=$PRIVATE_IP:8500
-export CONSUL_HTTP_TOKEN="e95b599e-166e-7d80-08ad-aee76e7ddf19"
-
-# Wait for Consul to be fully ready
-echo "Waiting for Consul to be ready..."
-until curl -s -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" http://$PRIVATE_IP:8500/v1/status/leader | grep -q ":"; do
-  echo "Consul not ready yet, waiting..."
-  sleep 5
-done
-echo "Consul is ready"
-
-# Create partitions AP1 and AP2
-echo "Creating partition AP1..."
-consul partition create -name AP1 -description "Application Partition 1" || echo "Partition AP1 already exists or failed to create"
-
-echo "Creating partition AP2..."
-consul partition create -name AP2 -description "Application Partition 2" || echo "Partition AP2 already exists or failed to create"
-
-echo "Partitions created successfully"
-
 # additional permissions for remote debugging
 sudo chmod -R a+rwx /etc/consul.d
 sudo chmod -R a+rwx /opt/consul/data

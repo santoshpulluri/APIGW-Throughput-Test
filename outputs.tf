@@ -51,32 +51,6 @@ ssh_to_prometheus
     ssh -i "minion-key.pem" ubuntu@${aws_instance.prometheus.public_ip}
 
 ==================================================
-DEBUGGING COMMANDS
-==================================================
-Check Partitions:
-    export CONSUL_HTTP_TOKEN="e95b599e-166e-7d80-08ad-aee76e7ddf19"
-    consul partition list
-
-Check Services (on Consul server):
-    consul catalog services -partition=default
-    consul catalog services -partition=AP1
-    consul catalog services -partition=AP2
-
-Check Service Logs:
-    # On hello-service instances
-    tail -f /var/log/user-data.log
-    tail -f /var/log/fake_service.log
-    tail -f /var/log/envoy.log
-    
-    # On response-service instances
-    tail -f /var/log/user-data.log
-    tail -f /var/log/fake_service.log
-    tail -f /var/log/envoy.log
-
-Check Consul Logs:
-    sudo journalctl -u consul -f
-
-==================================================
 
     CONFIGURATION
 }
