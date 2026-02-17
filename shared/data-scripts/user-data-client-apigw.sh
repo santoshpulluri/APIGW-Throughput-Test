@@ -32,6 +32,76 @@ PUBLIC_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://instance-data/late
 PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://instance-data/latest/meta-data/local-ipv4)
 INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://instance-data/latest/meta-data/instance-id)
 
+# Wait for AP1 partition (API Gateway routes to services in AP1)
+echo "Waiting for AP1 partition to be available..."
+export CONSUL_HTTP_TOKEN="e95b599e-166e-7d80-08ad-aee76e7ddf19"
+MAX_RETRIES=30
+RETRY_COUNT=0
+until consul partition list | grep -q "ap1" || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
+  echo "AP1 partition not yet available, waiting... (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)"
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+  echo "ERROR: AP1 partition failed to become available after $MAX_RETRIES attempts"
+  exit 1
+fi
+
+echo "AP1 partition is now available"
+
+# Wait for mesh gateway AP1 (required for cross-partition routing)
+echo "Waiting for mesh gateway AP1 to be registered..."
+RETRY_COUNT=0
+until consul catalog services -partition=ap1 | grep -q "mesh-gateway" || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
+  echo "Mesh gateway AP1 not yet registered, waiting... (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)"
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+  echo "ERROR: Mesh gateway AP1 not ready after $MAX_RETRIES attempts"
+  exit 1
+fi
+
+echo "Mesh gateway AP1 is now available"
+
+# Wait for hello service to be available in AP1
+echo "Waiting for hello service to be available in partition AP1..."
+RETRY_COUNT=0
+until consul catalog services -partition=ap1 | grep -q "service-hello" || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
+  echo "Hello service not yet available, waiting... (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)"
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+  echo "ERROR: Hello service not available after $MAX_RETRIES attempts"
+  exit 1
+fi
+
+echo "Hello service is now available"
+
+# Additional wait for exported services to propagate
+echo "Waiting for exported services configuration to propagate..."
+sleep 15
+
+# Verify service intention exists (allows API Gateway -> hello communication)
+echo "Verifying service intentions for API Gateway to Hello Service..."
+export CONSUL_HTTP_TOKEN="e95b599e-166e-7d80-08ad-aee76e7ddf19"
+RETRY_COUNT=0
+until consul config read -kind service-intentions -name service-hello -partition ap1 2>/dev/null | grep -q "minion-gateway" || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
+  echo "Service intention not yet configured, waiting... (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)"
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+  echo "WARNING: Service intention not fully configured, proceeding anyway..."
+else
+  echo "Service intention verified: minion-gateway can call service-hello"
+fi
+
 # starting the apigw-service application
 sleep 10
 
@@ -53,16 +123,8 @@ if [ ! -f /tmp/shared/config/api-gw-routes.hcl ]; then
   cp /tmp/shared/config/api-gw-routes.hcl /ops/shared/config/api-gw-routes.hcl
 fi
 
-# creating proxy default
-sudo tee ./proxy-default.hcl<<EOF
-Kind      = "proxy-defaults"
-Name      = "global"
-Config {
-  protocol = "http"
-}
-EOF
-
-consul config write proxy-default.hcl
+# Note: proxy-defaults is now managed by Terraform (see consul.tf)
+# This enables mesh gateway mode for cross-partition communication
 
 # Register the service with Consul
 consul config write /ops/shared/config/api-gw.hcl

@@ -33,6 +33,7 @@ rules = [
     services = [
       {
         name = "service-hello"
+        partition = "ap1"
       }
     ]
   }

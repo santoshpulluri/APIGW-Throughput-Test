@@ -2,6 +2,37 @@ provider "aws" {
   region = var.region
 }
 
+# Consul provider for managing partitions and config entries
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    consul = {
+      source  = "hashicorp/consul"
+      version = "~> 2.20"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = "~> 2.0"
+    }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "consul" {
+  address = "${aws_instance.consul.public_ip}:8500"
+  token   = var.consul_token
+}
+
 #1.  Add a new EC2 instance for Consul.
 #2.  Modify HelloService and ResponseService to include Consul configuration.
 
@@ -48,11 +79,73 @@ resource "aws_security_group" "consul_ui_ingress" {
     cidr_blocks     = ["0.0.0.0/0"]
   }
 
-  # envoy admin
+  # envoy admin (api-gw)
   ingress {
     from_port       = 19000
     to_port         = 19000
     protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  # envoy admin (mesh-gateway-ap1)
+  ingress {
+    from_port       = 19001
+    to_port         = 19001
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  # envoy admin (mesh-gateway-ap2)
+  ingress {
+    from_port       = 19002
+    to_port         = 19002
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  # gRPC (required for service mesh)
+  ingress {
+    from_port       = 8502
+    to_port         = 8502
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  # Consul server RPC
+  ingress {
+    from_port       = 8300
+    to_port         = 8300
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  # Consul serf LAN
+  ingress {
+    from_port       = 8301
+    to_port         = 8301
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port       = 8301
+    to_port         = 8301
+    protocol        = "udp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  # Consul serf WAN
+  ingress {
+    from_port       = 8302
+    to_port         = 8302
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port       = 8302
+    to_port         = 8302
+    protocol        = "udp"
     cidr_blocks     = ["0.0.0.0/0"]
   }
 
@@ -151,10 +244,51 @@ resource "aws_instance" "consul" {
   vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
 }
 
+# Wait for Consul server to be fully ready before Consul provider tries to connect
+resource "null_resource" "wait_for_consul" {
+  depends_on = [aws_instance.consul]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for Consul server to be ready at ${aws_instance.consul.public_ip}:8500..."
+      for i in {1..90}; do
+        # Check if API is reachable
+        if ! curl -s -f -o /dev/null "http://${aws_instance.consul.public_ip}:8500/v1/status/leader" 2>/dev/null; then
+          echo "Attempt $i/90: Consul API not reachable yet, waiting..."
+          sleep 10
+          continue
+        fi
+        
+        # Check if cluster has a leader
+        LEADER=$(curl -s "http://${aws_instance.consul.public_ip}:8500/v1/status/leader" 2>/dev/null | tr -d '"')
+        if [ -n "$LEADER" ] && [ "$LEADER" != "" ]; then
+          echo "Consul server is ready! Leader elected: $LEADER"
+          # Wait an additional 15 seconds for cluster to stabilize
+          echo "Waiting 15 more seconds for cluster to stabilize..."
+          sleep 15
+          exit 0
+        fi
+        
+        echo "Attempt $i/90: Consul API reachable but no leader elected yet, waiting..."
+        sleep 10
+      done
+      echo "ERROR: Consul server did not become ready after 900 seconds"
+      exit 1
+    EOT
+  }
+}
+
 # HelloService EC2 instance
 resource "aws_instance" "hello_service" {
   count = var.hello_service_count
-  depends_on = [aws_instance.response_service]
+  depends_on = [
+    aws_instance.response_service,
+    aws_instance.mesh_gateway_ap1,
+    aws_instance.mesh_gateway_ap2,
+    consul_config_entry.exported_services_ap1,
+    consul_config_entry.exported_services_ap2,
+    consul_config_entry.intention_hello_to_response
+  ]
   ami = data.aws_ami.ubuntu.id
   instance_type = var.instance_type
   key_name      = aws_key_pair.minion-key.key_name
@@ -207,7 +341,10 @@ resource "aws_instance" "hello_service" {
 # Update ResponseService to register with Consul
 resource "aws_instance" "response_service" {
   count = var.response_service_count
-  depends_on = [aws_instance.consul]
+  depends_on = [
+    aws_instance.mesh_gateway_ap2,
+    consul_config_entry.exported_services_ap2
+  ]
   ami = data.aws_ami.ubuntu.id
   instance_type = var.instance_type
   key_name      = aws_key_pair.minion-key.key_name
@@ -259,7 +396,12 @@ resource "aws_instance" "response_service" {
 
 # Update api-gw
 resource "aws_instance" "apigw_service" {
-  depends_on = [aws_instance.consul]
+  depends_on = [
+    aws_instance.hello_service,
+    aws_instance.mesh_gateway_ap1,
+    consul_config_entry.exported_services_ap1,
+    consul_config_entry.intention_apigw_to_hello
+  ]
   ami = data.aws_ami.ubuntu.id
   instance_type = var.instance_type
   key_name      = aws_key_pair.minion-key.key_name
@@ -308,11 +450,119 @@ resource "aws_instance" "apigw_service" {
   vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
 }
 
+# Mesh Gateway for AP1 Partition
+resource "aws_instance" "mesh_gateway_ap1" {
+  depends_on = [
+    consul_admin_partition.ap1,
+    consul_config_entry.proxy_defaults_ap1
+  ]
+  ami = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = aws_key_pair.minion-key.key_name
+
+  # instance tags
+  # ConsulAutoJoin is necessary for nodes to automatically join the cluster
+  tags = merge(
+    {
+      "Name" = "${var.name_prefix}-mesh-gateway-ap1"
+    },
+    {
+      "ConsulAutoJoin" = "auto-join"
+    },
+    {
+      "NomadType" = "client"
+    }
+  )
+
+  iam_instance_profile = aws_iam_instance_profile.instance_profile.name
+
+  metadata_options {
+    http_endpoint          = "enabled"
+    instance_metadata_tags = "enabled"
+  }
+
+  # copy files from ./shared to /ops with private key permissions
+  provisioner "file" {
+    source      = "${path.module}/shared"
+    destination = "/tmp"
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = tls_private_key.pk.private_key_pem
+      host        = self.public_ip
+    }
+  }
+
+  # initialises the instance with the runtime configuration
+  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client-mesh-gw-ap1.sh", {
+    region                    = var.region
+    cloud_env                 = "aws"
+    retry_join                = var.retry_join
+  })
+
+  vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
+}
+
+# Mesh Gateway for AP2 Partition
+resource "aws_instance" "mesh_gateway_ap2" {
+  depends_on = [
+    consul_admin_partition.ap2,
+    consul_config_entry.proxy_defaults_ap2
+  ]
+  ami = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = aws_key_pair.minion-key.key_name
+
+  # instance tags
+  # ConsulAutoJoin is necessary for nodes to automatically join the cluster
+  tags = merge(
+    {
+      "Name" = "${var.name_prefix}-mesh-gateway-ap2"
+    },
+    {
+      "ConsulAutoJoin" = "auto-join"
+    },
+    {
+      "NomadType" = "client"
+    }
+  )
+
+  iam_instance_profile = aws_iam_instance_profile.instance_profile.name
+
+  metadata_options {
+    http_endpoint          = "enabled"
+    instance_metadata_tags = "enabled"
+  }
+
+  # copy files from ./shared to /ops with private key permissions
+  provisioner "file" {
+    source      = "${path.module}/shared"
+    destination = "/tmp"
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = tls_private_key.pk.private_key_pem
+      host        = self.public_ip
+    }
+  }
+
+  # initialises the instance with the runtime configuration
+  user_data = templatefile("${path.module}/shared/data-scripts/user-data-client-mesh-gw-ap2.sh", {
+    region                    = var.region
+    cloud_env                 = "aws"
+    retry_join                = var.retry_join
+  })
+
+  vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
+}
+
 # Update prometheus
 resource "aws_instance" "prometheus" {
   depends_on = [aws_instance.consul, aws_instance.hello_service, aws_instance.response_service, aws_instance.apigw_service]
   ami = data.aws_ami.ubuntu.id
-  instance_type = var.instance_type
+  instance_type = var.monitoring_instance_type
   key_name      = aws_key_pair.minion-key.key_name
 
   # instance tags
@@ -364,7 +614,7 @@ resource "aws_instance" "prometheus" {
 resource "aws_instance" "grafana" {
   depends_on = [aws_instance.consul, aws_instance.prometheus]
   ami = data.aws_ami.ubuntu.id
-  instance_type = var.instance_type
+  instance_type = var.monitoring_instance_type
   key_name      = aws_key_pair.minion-key.key_name
 
   # instance tags

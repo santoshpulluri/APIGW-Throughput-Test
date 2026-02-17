@@ -19,7 +19,8 @@ sudo mkdir -p /ops/shared
 sleep 10
 sudo cp -R /tmp/shared /ops/
 
-sudo bash /ops/shared/scripts/client.sh "${cloud_env}" "${retry_join}"
+# Use AP2 partition config for response service
+sudo bash /ops/shared/scripts/client.sh "${cloud_env}" "${retry_join}" "ap2"
 
 NOMAD_HCL_PATH="/etc/nomad.d/nomad.hcl"
 CLOUD_ENV="${cloud_env}"
@@ -31,6 +32,46 @@ sleep 10
 PUBLIC_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://instance-data/latest/meta-data/public-ipv4)
 PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://instance-data/latest/meta-data/local-ipv4)
 INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://instance-data/latest/meta-data/instance-id)
+
+# Wait for AP2 partition to be created on the server
+echo "Waiting for AP2 partition to be available..."
+export CONSUL_HTTP_TOKEN="e95b599e-166e-7d80-08ad-aee76e7ddf19"
+MAX_RETRIES=30
+RETRY_COUNT=0
+until consul partition list | grep -q "ap2" || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
+  echo "AP2 partition not yet available, waiting... (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)"
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+  echo "ERROR: AP2 partition failed to become available after $MAX_RETRIES attempts"
+  exit 1
+fi
+
+echo "AP2 partition is now available"
+
+# Wait for mesh gateway AP2 to be ready (required for receiving cross-partition traffic)
+echo "Waiting for mesh gateway AP2 to be registered and healthy..."
+RETRY_COUNT=0
+MAX_RETRIES=30
+
+until consul catalog services -partition=ap2 | grep -q "mesh-gateway" || [ $RETRY_COUNT -eq $MAX_RETRIES ]; do
+  echo "Mesh gateway AP2 not yet registered, waiting... (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)"
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+  echo "ERROR: Mesh gateway AP2 not ready after $MAX_RETRIES attempts"
+  exit 1
+fi
+
+echo "Mesh gateway AP2 is now available"
+
+# Additional wait for exported services to propagate
+echo "Waiting for exported services configuration to propagate..."
+sleep 15
 
 # starting the response-service application
 sudo touch /var/log/fake_service.log
@@ -65,10 +106,10 @@ sed -i "s/IP_ADDRESS/$PRIVATE_IP/g" /ops/shared/config/response-service-proxy.hc
 sed -i "s/INSTANCE_INDEX/${index}/g" /ops/shared/config/response-service-proxy.hcl
 sed -i "s/PROXY_PORT/21000/g" /ops/shared/config/response-service-proxy.hcl
 
-# Register the service with Consul
+# Register the service with Consul (will be in AP2 partition due to agent config)
+export CONSUL_HTTP_TOKEN="e95b599e-166e-7d80-08ad-aee76e7ddf19"
 consul services register /ops/shared/config/response-service.json
-consul services register /ops/shared/config/response-service-proxy.hcl
-# sudo docker run -d --name service-a-sidecar --network host consul:1.18 connect proxy -sidecar-for service-response -admin-bind="127.0.0.1:19000"
+# Note: The sidecar proxy is automatically created via the connect.sidecar_service in the JSON
 
 touch /var/log/envoy.log
 chmod a+rw /var/log/envoy.log

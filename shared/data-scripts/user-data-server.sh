@@ -43,6 +43,9 @@ sleep 10
 
 echo "Consul started"
 
+# Note: Admin Partitions and Exported Services are now managed by Terraform
+# See consul.tf for partition definitions
+
 # additional permissions for remote debugging
 sudo chmod -R a+rwx /etc/consul.d
 sudo chmod -R a+rwx /opt/consul/data

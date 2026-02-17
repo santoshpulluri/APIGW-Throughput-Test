@@ -10,6 +10,7 @@
           "upstreams": [
             {
               "destination_name": "service-response",
+              "destination_partition": "ap2",
               "local_bind_port": 9999
             }
           ]

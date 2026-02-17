@@ -8,6 +8,46 @@ Consul UI: http://${aws_instance.consul.public_ip}:8500
 ACL Token: e95b599e-166e-7d80-08ad-aee76e7ddf19
 
 ==================================================
+CONSUL ADMIN PARTITIONS
+==================================================
+Admin Partitions Created:
+  - default (API Gateway)
+  - ap1 (Hello Service) - ID: ${consul_admin_partition.ap1.id}
+  - ap2 (Response Service) - ID: ${consul_admin_partition.ap2.id}
+
+Service Distribution:
+  - service-hello: AP1 → exported to default
+  - service-response: AP2 → exported to AP1
+  - mesh-gateway: AP1 → exported to default (required for cross-partition routing)
+  - mesh-gateway: AP2 → exported to AP1 (required for cross-partition routing)
+  - minion-gateway (API GW): default → accesses AP1
+
+CRITICAL: Both mesh-gateway AND application services must be exported
+  Reference: https://support.hashicorp.com/hc/en-us/articles/19290357144211
+
+Mesh Gateways (for cross-partition communication):
+  - mesh-gateway-ap1: ${aws_instance.mesh_gateway_ap1.private_ip} (port 8443)
+    Admin UI: http://${aws_instance.mesh_gateway_ap1.public_ip}:19001
+    SSH: ssh -i "minion-key.pem" ubuntu@${aws_instance.mesh_gateway_ap1.public_ip}
+  - mesh-gateway-ap2: ${aws_instance.mesh_gateway_ap2.private_ip} (port 8443)
+    Admin UI: http://${aws_instance.mesh_gateway_ap2.public_ip}:19002
+    SSH: ssh -i "minion-key.pem" ubuntu@${aws_instance.mesh_gateway_ap2.public_ip}
+
+Mesh Gateway Mode: local (services route through local mesh gateway)
+
+Required Ports for Mesh Gateways:
+  - 8443: Mesh gateway traffic (WAN federation)
+  - 8502: gRPC (service mesh communication)
+  - 8300: Consul server RPC
+  - 8301: Consul serf LAN (TCP/UDP)
+  - 8302: Consul serf WAN (TCP/UDP)
+  - 19001/19002: Envoy admin interfaces
+
+Service Intentions (Authorization):
+  ✓ service-hello (AP1) → service-response (AP2): ALLOW
+  ✓ minion-gateway (default) → service-hello (AP1): ALLOW
+
+==================================================
 API GATEWAY (Main Entry Point)
 ==================================================
     http://${aws_instance.apigw_service.public_ip}:8443/hello

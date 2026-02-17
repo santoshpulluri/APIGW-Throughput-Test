@@ -21,6 +21,7 @@ sleep 15
 DOCKER_BRIDGE_IP_ADDRESS=(`ip -brief addr show docker0 | awk '{print $3}' | awk -F/ '{print $1}'`)
 CLOUD=$1
 RETRY_JOIN=$2
+PARTITION=$3  # Optional partition parameter (ap1, ap2, or empty for default)
 
 # Get IP from metadata service
 case $CLOUD in
@@ -65,9 +66,18 @@ sudo apt-get update && sudo apt-get -y install consul-enterprise=$CONSULVERSION*
 
 echo "Setup consul config"
 # Consul
-sed -i "s/IP_ADDRESS/$IP_ADDRESS/g" $CONFIGDIR/consul_client.hcl
-sed -i "s/RETRY_JOIN/$RETRY_JOIN/g" $CONFIGDIR/consul_client.hcl
-sudo cp $CONFIGDIR/consul_client.hcl $CONSULCONFIGDIR/consul.hcl
+# Determine which config file to use based on partition
+if [ -z "$PARTITION" ]; then
+  echo "Using default partition"
+  CONFIG_FILE="consul_client.hcl"
+else
+  echo "Using partition: $PARTITION"
+  CONFIG_FILE="consul_client_${PARTITION}.hcl"
+fi
+
+sed -i "s/IP_ADDRESS/$IP_ADDRESS/g" $CONFIGDIR/$CONFIG_FILE
+sed -i "s/RETRY_JOIN/$RETRY_JOIN/g" $CONFIGDIR/$CONFIG_FILE
+sudo cp $CONFIGDIR/$CONFIG_FILE $CONSULCONFIGDIR/consul.hcl
 
 sudo cp $CONFIGDIR/acl_client.hcl $CONSULCONFIGDIR/acl.hcl
 
