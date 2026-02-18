@@ -1,3 +1,4 @@
+
 kind = "http-route"
 name = "minion-api-gateway-route"
 parents = [
@@ -5,7 +6,7 @@ parents = [
     sectionName = "service-hello-http-listener"
     name = "minion-gateway"
     kind = "api-gateway"
-  },
+  }
 ]
 rules = [
   {
@@ -17,23 +18,26 @@ rules = [
         }
       }
     ]
-    # filters = {
-    #   JWT = {
-    #     Providers = [
-    #       {
-    #         Name = "okta", # this is referencing an existing JWT provider config entry
-    #         VerifyClaims = {
-    #           Path = ["perms", "role"],
-    #           Value = "admin",
-    #         }
-    #       }
-    #     ]
-    #   }
-    # }
     services = [
       {
         name = "service-hello"
         partition = "ap1"
+      }
+    ]
+  },
+  {
+    Matches = [
+      {
+        Path = {
+          Match = "prefix"
+          Value = "/response"
+        }
+      }
+    ]
+    services = [
+      {
+        name = "service-response"
+        partition = "ap2"
       }
     ]
   }

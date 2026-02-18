@@ -190,3 +190,24 @@ resource "consul_config_entry" "intention_apigw_to_hello" {
     consul_config_entry.exported_services_ap1
   ]
 }
+
+resource "consul_config_entry" "intention_apigw_to_response" {
+  name      = "service-response"
+  kind      = "service-intentions"
+  partition = "ap2"
+
+  config_json = jsonencode({
+    Sources = [
+      {
+        Name      = "minion-gateway"
+        Partition = "default"
+        Action    = "allow"
+      }
+    ]
+  })
+
+  depends_on = [
+    consul_admin_partition.ap2,
+    consul_config_entry.exported_services_ap2
+  ]
+}

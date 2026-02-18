@@ -1,3 +1,36 @@
+# Load Generator EC2 instance
+resource "aws_instance" "load_generator" {
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = aws_key_pair.minion-key.key_name
+  tags = {
+    Name = "${var.name_prefix}-load-generator"
+  }
+  iam_instance_profile = aws_iam_instance_profile.instance_profile.name
+  metadata_options {
+    http_endpoint          = "enabled"
+    instance_metadata_tags = "enabled"
+  }
+  vpc_security_group_ids = [aws_security_group.consul_ui_ingress.id]
+  provisioner "file" {
+    source      = "${path.module}/benchmark_apigw.sh"
+    destination = "/tmp/benchmark_apigw.sh"
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = tls_private_key.pk.private_key_pem
+      host        = self.public_ip
+    }
+  }
+  user_data = templatefile(
+    "${path.module}/shared/data-scripts/user-data-client-load-generator.sh",
+    {
+      hello_url      = "http://${aws_instance.apigw_service.public_ip}:8443/hello"
+      hellobello_url = "http://${aws_instance.apigw_service.public_ip}:8443/hellobello"
+      response_url   = "http://${aws_instance.apigw_service.public_ip}:8443/response"
+    }
+  )
+}
 provider "aws" {
   region = var.region
 }

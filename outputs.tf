@@ -1,3 +1,19 @@
+# Load Generator Public IP
+output "load_generator_public_ip" {
+  description = "Public IP of the Load Generator EC2 instance"
+  value       = aws_instance.load_generator.public_ip
+}
+# API Gateway Public IP
+output "apigw_service_public_ip" {
+  description = "Public IP of the API Gateway EC2 instance"
+  value       = aws_instance.apigw_service.public_ip
+}
+
+# Response Service Public IP (assuming first instance)
+output "response_service_public_ip" {
+  description = "Public IP of the Response Service EC2 instance"
+  value       = aws_instance.response_service[0].public_ip
+}
 #Add Consul UI URL
 output "output" {
     value = <<CONFIGURATION
